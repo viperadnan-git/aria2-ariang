@@ -151,15 +151,12 @@ jobs:
         needs: [check_update, publish-on-docker, publish-on-ghcr]
         runs-on: ubuntu-latest
         steps:
-            - name: Checkout code
-              uses: actions/checkout@v4
-            
-            - name: Create Release
-              uses: ncipollo/release-action@v1
+            - name: Create GitHub release
               env:
+                  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
                   TAG: ${{ needs.check_update.outputs.new_tag }}
-                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-              with:
-                name: Release AriaNg ${{ env.TAG }}
-                tag: ${{ env.TAG }}
-                generateReleaseNotes: true
+              run: |
+                  gh release create "${{ env.TAG }}" \
+                      --title "Release AriaNg ${{ env.TAG }}" \
+                      --notes "Automated release for AriaNg version ${{ env.TAG }}" \
+                      --generate-notes
