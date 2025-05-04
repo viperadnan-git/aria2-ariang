@@ -14,7 +14,7 @@ on:
 jobs:
     check_update:
         name: Check for new AriaNg release
-        runs-on: ubuntu-20.04
+        runs-on: ubuntu-latest
         outputs:
             should_publish: ${{ steps.compare.outputs.should_publish }}
             new_tag: ${{ steps.releases.outputs.target }}
