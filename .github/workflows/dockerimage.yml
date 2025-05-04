@@ -159,5 +159,5 @@ jobs:
                   gh release create "${{ env.TAG }}" \
                       --title "Release AriaNg ${{ env.TAG }}" \
                       --notes "Automated release for AriaNg version ${{ env.TAG }}" \
-                      --generate-notes
+                      --generate-notes \
                       --repo ${{ github.repository }}
