@@ -144,3 +144,22 @@ jobs:
                   labels: ${{ steps.meta.outputs.labels }}
                   build-args: |
                       ARIANG_VERSION=${{ env.TAG }}
+
+    create_release:
+        name: Create GitHub Release
+        # needs the images to be published
+        needs: [check_update, publish-on-docker, publish-on-ghcr]
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
+            
+            - name: Create Release
+              uses: ncipollo/release-action@v1
+              env:
+                  TAG: ${{ needs.check_update.outputs.new_tag }}
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+              with:
+                name: Release AriaNg ${{ env.TAG }}
+                tag: ${{ env.TAG }}
+                generateReleaseNotes: true
