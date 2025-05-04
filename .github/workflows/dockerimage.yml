@@ -160,3 +160,4 @@ jobs:
                       --title "Release AriaNg ${{ env.TAG }}" \
                       --notes "Automated release for AriaNg version ${{ env.TAG }}" \
                       --generate-notes
+                      --repo ${{ github.repository }}
