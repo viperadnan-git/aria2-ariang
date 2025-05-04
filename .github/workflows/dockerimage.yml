@@ -83,6 +83,8 @@ jobs:
                   push: true
                   tags: ${{ steps.meta_hub.outputs.tags }}
                   labels: ${{ steps.meta_hub.outputs.labels }}
+                  build-args: |
+                      ARIANG_VERSION=${{ env.TAG }}
 
             - name: Update Docker Hub description
               uses: peter-evans/dockerhub-description@v4
@@ -116,3 +118,5 @@ jobs:
                   push: true
                   tags: ${{ steps.meta_ghcr.outputs.tags }}
                   labels: ${{ steps.meta_ghcr.outputs.labels }}
+                  build-args: |
+                      ARIANG_VERSION=${{ env.TAG }}
