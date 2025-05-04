@@ -1,82 +1,118 @@
-name: Docker image build
+name: Build & Publish Docker Image
 
 on:
-  workflow_dispatch:
-  schedule:
-    - cron: "0 0 * * *"
+    workflow_dispatch:
+    push:
+        branches:
+            - main
+    release:
+        types: [published]
+    schedule:
+        # triggers at 00:00 UTC every 3 days (days 3,6,9,…)
+        - cron: "0 0 */3 * *"
 
 jobs:
-  build_image:
-    name: Build docker image
-    runs-on: ubuntu-20.04
-    steps:
-      - uses: actions/checkout@master
-      - name: Fetch latest github release
-        run: |
-          sudo apt-get update && sudo apt-get install jq -y
-          THIS_REPO=https://api.github.com/repos/$GITHUB_REPOSITORY/releases/latest
-          TARGET_REPO=https://api.github.com/repos/mayswind/AriaNg/releases/latest
-          echo "current=$(curl $THIS_REPO | jq -r '.tag_name')" >> $GITHUB_OUTPUT
-          echo "target=$(curl $TARGET_REPO | jq -r '.tag_name')" >> $GITHUB_OUTPUT
-        id: releases
+    check_update:
+        name: Check for new AriaNg release
+        runs-on: ubuntu-20.04
+        outputs:
+            should_publish: ${{ steps.compare.outputs.should_publish }}
+            new_tag: ${{ steps.releases.outputs.target }}
+        steps:
+            - name: Install tools
+              run: sudo apt-get update && sudo apt-get install -y jq curl
 
-      - name: Install Docker CE
-        if: steps.releases.outputs.current != steps.releases.outputs.target
-        run: |
-          sudo apt-get update
-          sudo apt-get install \
-              apt-transport-https \
-              ca-certificates \
-              curl \
-              gnupg-agent \
-              software-properties-common
-          curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -
-          sudo apt-key fingerprint 0EBFCD88
-          sudo add-apt-repository \
-            "deb [arch=amd64] https://download.docker.com/linux/ubuntu \
-            $(lsb_release -cs) \
-            stable"
-          sudo apt-get update
-          sudo apt-get install docker-ce docker-ce-cli containerd.io
-          apt-cache madison docker-ce
+            - name: Fetch tags
+              id: releases
+              run: |
+                  THIS="https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/latest"
+                  TARGET="https://api.github.com/repos/mayswind/AriaNg/releases/latest"
+                  echo "current=$(curl -s $THIS | jq -r '.tag_name')" >> $GITHUB_OUTPUT
+                  echo "target=$(curl -s $TARGET | jq -r '.tag_name')" >> $GITHUB_OUTPUT
 
-      - name: Setup Docker buildx
-        if: steps.releases.outputs.current != steps.releases.outputs.target
-        run: |
-          mkdir -p ~/.docker
-          echo $'{\n    "experimental": "enabled"\n}' | sudo tee ~/.docker/config.json;
-          sudo service docker restart
-          docker version
-          docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
-          docker buildx create --use --name mult
-          docker buildx inspect --bootstrap
-          docker buildx ls
+            - name: Compare tags
+              id: compare
+              run: |
+                  if [ "${{ steps.releases.outputs.current }}" != "${{ steps.releases.outputs.target }}" ]; then
+                    echo "should_publish=true" >> $GITHUB_OUTPUT
+                  else
+                    echo "should_publish=false" >> $GITHUB_OUTPUT
+                  fi
 
-      - name: Build and push image
-        if: steps.releases.outputs.current != steps.releases.outputs.target
+    publish:
+        name: Build & Push Image
+        needs: check_update
+        # only fire if we saw a new tag
+        if: needs.check_update.outputs.should_publish == 'true'
+        runs-on: ubuntu-latest
         env:
-          ARIANG_VERSION: ${{ steps.releases.outputs.target }}
-          DOCKERHUB_REPOSITORY: ${{ secrets.DOCKERHUB_REPOSITORY }}
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_PASSWORD: ${{ secrets.DOCKERHUB_PASSWORD }}
-        run: |
-          echo $DOCKERHUB_PASSWORD | docker login --username $DOCKERHUB_USERNAME --password-stdin
-          docker buildx build --push --platform linux/amd64,linux/arm64,linux/arm/v7 --build-arg ARIANG_VERSION=$ARIANG_VERSION --build-arg VCS_REF=${GITHUB_SHA::7} --build-arg BUILD_DATE=`date -u +"%Y-%m-%dT%H:%M:%SZ"` -t $DOCKERHUB_REPOSITORY:$ARIANG_VERSION .
-          docker buildx build --push --platform linux/amd64,linux/arm64,linux/arm/v7 --build-arg ARIANG_VERSION=$ARIANG_VERSION --build-arg VCS_REF=${GITHUB_SHA::7} --build-arg BUILD_DATE=`date -u +"%Y-%m-%dT%H:%M:%SZ"` -t $DOCKERHUB_REPOSITORY:latest .
+            IMAGE_NAME: ${{ github.event.repository.name }}
+            PLATFORMS: linux/amd64,linux/arm64,linux/arm64,linux/arm/v7
+            TAG: ${{ needs.check_update.outputs.new_tag }}
+        steps:
+            - name: Check out code
+              uses: actions/checkout@v4
 
+            - name: Set up QEMU
+              uses: docker/setup-qemu-action@v3
 
-      - name: Update DockerHub Description
-        if: steps.releases.outputs.current != steps.releases.outputs.target
-        uses: peter-evans/dockerhub-description@v3.0.0
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_PASSWORD }}
-          repository: ${{ secrets.DOCKERHUB_REPOSITORY }}
+            - name: Set up Docker Buildx
+              uses: docker/setup-buildx-action@v3
 
-      - name: Create new Github release
-        if: steps.releases.outputs.current != steps.releases.outputs.target
-        uses: meeDamian/github-release@1.0
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          tag: ${{ steps.releases.outputs.target }}
-          name: Update to AriaNg ${{ steps.releases.outputs.target }}
+            - name: Log in to Docker Hub
+              uses: docker/login-action@v3
+              with:
+                  username: ${{ secrets.DOCKER_USERNAME }}
+                  password: ${{ secrets.DOCKER_PASSWORD }}
+
+            - name: Docker Hub metadata
+              id: meta_hub
+              uses: docker/metadata-action@v5
+              with:
+                  images: ${{ secrets.DOCKER_USERNAME }}/${{ env.IMAGE_NAME }}
+                  tags: |
+                      type=ref,event=branch
+                      type=semver,pattern=${{ env.TAG }}
+                      type=semver,pattern={{major}}.{{minor}}
+
+            - name: Build & push to Docker Hub
+              uses: docker/build-push-action@v5
+              with:
+                  context: .
+                  platforms: ${{ env.PLATFORMS }}
+                  push: true
+                  tags: ${{ steps.meta_hub.outputs.tags }}
+                  labels: ${{ steps.meta_hub.outputs.labels }}
+
+            - name: Update Docker Hub description
+              uses: peter-evans/dockerhub-description@v4
+              with:
+                  username: ${{ secrets.DOCKER_USERNAME }}
+                  password: ${{ secrets.DOCKER_PASSWORD }}
+                  repository: ${{ secrets.DOCKER_USERNAME }}/${{ env.IMAGE_NAME }}
+
+            - name: Log in to GitHub Packages
+              uses: docker/login-action@v3
+              with:
+                  registry: ghcr.io
+                  username: ${{ github.actor }}
+                  password: ${{ secrets.GITHUB_TOKEN }}
+
+            - name: GitHub Packages metadata
+              id: meta_ghcr
+              uses: docker/metadata-action@v5
+              with:
+                  images: ghcr.io/${{ github.actor }}/${{ env.IMAGE_NAME }}
+                  tags: |
+                      type=ref,event=branch
+                      type=semver,pattern=${{ env.TAG }}
+                      type=semver,pattern={{major}}.{{minor}}
+
+            - name: Build & push to GitHub Packages
+              uses: docker/build-push-action@v5
+              with:
+                  context: .
+                  platforms: ${{ env.PLATFORMS }}
+                  push: true
+                  tags: ${{ steps.meta_ghcr.outputs.tags }}
+                  labels: ${{ steps.meta_ghcr.outputs.labels }}
